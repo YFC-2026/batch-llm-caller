@@ -244,7 +244,7 @@
 
       <div class="field">
         <label for="prompt-file">Prompt file</label>
-        <input id="prompt-file" type="file" accept=".txt,.csv,text/plain,text/csv">
+        <input id="prompt-file" type="file" accept=".txt,.csv,.jpg,.jpeg,.png,text/plain,text/csv,image/jpeg,image/png">
         <p class="hint">Use a .txt or .csv file with one prompt per line.</p>
       </div>
 
@@ -290,6 +290,10 @@
     const resultList = document.getElementById("result-list");
     const downloadButton = document.getElementById("download-button");
 
+    const textModelPlaceholder = "qwen3.5-0.8b (LM Studio), gemini-2.5-flash (Google AI Studio), meta-llama/llama-3.3-70b-instruct:free (OpenRouter)";
+    const imageModelPlaceholder = "qwen2.5-vl-7b (LM Studio, if loaded), qwen/qwen2.5-vl-72b-instruct:free (OpenRouter)";
+    const imageFallbackPrompt = "Transcribe this image as accurately as you can.";
+
     let results = [];
 
     function readFileAsText(file) {
@@ -299,6 +303,22 @@
         reader.onerror = () => reject(reader.error || new Error("Could not read file."));
         reader.readAsText(file);
       });
+    }
+
+    function readFileAsDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(reader.error || new Error("Could not read image file."));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function isImageFile(file) {
+      return Boolean(file) && (
+        file.type.startsWith("image/") ||
+        /\.(jpe?g|png)$/i.test(file.name)
+      );
     }
 
     function parsePrompts(text) {
@@ -354,8 +374,7 @@
       resultList.append(card);
     }
 
-    async function callModel(apiUrl, apiKey, model, systemPrompt, prompt) {
-      const messages = [];
+    function buildHeaders(apiKey) {
       const headers = {
         "Content-Type": "application/json"
       };
@@ -364,21 +383,13 @@
         headers.Authorization = "Bearer " + apiKey.trim();
       }
 
-      if (systemPrompt.trim()) {
-        messages.push({
-          role: "system",
-          content: systemPrompt
-        });
-      }
+      return headers;
+    }
 
-      messages.push({
-        role: "user",
-        content: prompt
-      });
-
+    async function postChatCompletion(apiUrl, apiKey, model, messages) {
       const response = await fetch(apiUrl, {
         method: "POST",
-        headers,
+        headers: buildHeaders(apiKey),
         body: JSON.stringify({
           model,
           messages
@@ -406,6 +417,47 @@
       }
 
       return responseText || "";
+    }
+
+    async function callModel(apiUrl, apiKey, model, systemPrompt, prompt) {
+      const messages = [];
+
+      if (systemPrompt.trim()) {
+        messages.push({
+          role: "system",
+          content: systemPrompt
+        });
+      }
+
+      messages.push({
+        role: "user",
+        content: prompt
+      });
+
+      return postChatCompletion(apiUrl, apiKey, model, messages);
+    }
+
+    async function callImageModel(apiUrl, apiKey, model, userText, imageDataUrl) {
+      const promptText = userText.trim() || imageFallbackPrompt;
+      const messages = [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: promptText
+            },
+            {
+              type: "image_url",
+              image_url: {
+                url: imageDataUrl
+              }
+            }
+          ]
+        }
+      ];
+
+      return postChatCompletion(apiUrl, apiKey, model, messages);
     }
 
     function escapeCsvField(value) {
@@ -439,6 +491,12 @@
       downloadButton.classList.remove("visible");
     }
 
+    fileInput.addEventListener("change", () => {
+      modelInput.placeholder = isImageFile(fileInput.files[0])
+        ? imageModelPlaceholder
+        : textModelPlaceholder;
+    });
+
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       resetRun();
@@ -468,6 +526,32 @@
 
       try {
         setStatus("Reading file...");
+
+        if (isImageFile(file)) {
+          const imageDataUrl = await readFileAsDataUrl(file);
+          setStatus("Processing image...");
+
+          let responseText;
+
+          try {
+            responseText = await callImageModel(apiUrl, apiKey, model, systemPrompt, imageDataUrl);
+          } catch (error) {
+            responseText = "Error: " + (error && error.message ? error.message : String(error));
+          }
+
+          const row = {
+            row_number: 1,
+            input: file.name,
+            response: responseText
+          };
+
+          results.push(row);
+          addResultCard(row.row_number, row.input, row.response);
+          downloadButton.classList.add("visible");
+          setStatus("Done. Processed 1 row.", "done");
+          return;
+        }
+
         const fileText = await readFileAsText(file);
         const prompts = parsePrompts(fileText);
 
