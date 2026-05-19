@@ -249,8 +249,18 @@
       </div>
 
       <div class="field">
+        <label for="api-url">API URL</label>
+        <input id="api-url" type="text" value="http://localhost:1234/v1/chat/completions" autocomplete="off">
+      </div>
+
+      <div class="field">
+        <label for="api-key">API Key</label>
+        <input id="api-key" type="password" value="" autocomplete="off">
+      </div>
+
+      <div class="field">
         <label for="model-name">Model name</label>
-        <input id="model-name" type="text" value="qwen3.5-0.8b" autocomplete="off">
+        <input id="model-name" type="text" value="qwen3.5-0.8b" placeholder="qwen3.5-0.8b (LM Studio), gemini-2.5-flash (Google AI Studio), meta-llama/llama-3.3-70b-instruct:free (OpenRouter)" autocomplete="off">
       </div>
 
       <div class="actions">
@@ -269,11 +279,11 @@
   </main>
 
   <script>
-    const API_URL = "http://localhost:1234/v1/chat/completions";
-
     const form = document.getElementById("batch-form");
     const systemPromptInput = document.getElementById("system-prompt");
     const fileInput = document.getElementById("prompt-file");
+    const apiUrlInput = document.getElementById("api-url");
+    const apiKeyInput = document.getElementById("api-key");
     const modelInput = document.getElementById("model-name");
     const runButton = document.getElementById("run-button");
     const statusArea = document.getElementById("status");
@@ -344,8 +354,15 @@
       resultList.append(card);
     }
 
-    async function callModel(model, systemPrompt, prompt) {
+    async function callModel(apiUrl, apiKey, model, systemPrompt, prompt) {
       const messages = [];
+      const headers = {
+        "Content-Type": "application/json"
+      };
+
+      if (apiKey.trim()) {
+        headers.Authorization = "Bearer " + apiKey.trim();
+      }
 
       if (systemPrompt.trim()) {
         messages.push({
@@ -359,11 +376,9 @@
         content: prompt
       });
 
-      const response = await fetch(API_URL, {
+      const response = await fetch(apiUrl, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
+        headers,
         body: JSON.stringify({
           model,
           messages
@@ -429,6 +444,8 @@
       resetRun();
 
       const file = fileInput.files[0];
+      const apiUrl = apiUrlInput.value.trim();
+      const apiKey = apiKeyInput.value;
       const model = modelInput.value.trim();
       const systemPrompt = systemPromptInput.value;
 
@@ -439,6 +456,11 @@
 
       if (!model) {
         setStatus("Enter a model name before running.", "error");
+        return;
+      }
+
+      if (!apiUrl) {
+        setStatus("Enter an API URL before running.", "error");
         return;
       }
 
@@ -462,7 +484,7 @@
           let responseText;
 
           try {
-            responseText = await callModel(model, systemPrompt, input);
+            responseText = await callModel(apiUrl, apiKey, model, systemPrompt, input);
           } catch (error) {
             responseText = "Error: " + (error && error.message ? error.message : String(error));
           }
